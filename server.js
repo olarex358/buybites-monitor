@@ -45,7 +45,7 @@ app.get('/api/v1/overview', adminAuth, async (req, res) => {
     const userStats = await User.aggregate([{ $group: { _id: null, total: { $sum: "$walletBalance" } } }]);
     
     // Updated Peyflex Endpoint based on standard VTU API paths
-    const pFlex = await axios.get("https://peyflex.com.ng/api/wallet/balance/", {
+    const pFlex = await axios.get("https://peyflex.com.ng/api/v1/user/", {
       headers: { "Authorization": `Token ${process.env.PEYFLEX_TOKEN}` }
     }).catch(() => ({ data: { wallet_balance: 0 } })); // Fallback if Peyflex is down
 
