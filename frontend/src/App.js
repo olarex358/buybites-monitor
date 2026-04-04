@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API_URL = "https://buybites-admin-monitor.onrender.com";
+const API_URL = "https://buybites-monitor.onrender.com";
 
 function App() {
   const [isLocked, setIsLocked] = useState(true);
