@@ -2,15 +2,15 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
 
-// Ensure this URL exactly matches your Render service URL
-const API_URL = "https://buybites-admin-monitor.onrender.com/api/v1";
+// Ensure this matches your Primary URL in Render exactly
+const API_URL = "https://buybites-monitor.onrender.com/api/v1";
 const ADMIN_KEY = "Olarewaju@1994"; // Must match Render's ADMIN_SECRET_KEY
 
 function App() {
   const [view, setView] = useState('overview');
   const [period, setPeriod] = useState('today');
-  const [data, setData] = useState(null);
-  const [analytics, setAnalytics] = useState(null);
+  const [data, setData] = useState({ userLiability: 0, peyflexBalance: 0, netLiquidity: 0 });
+  const [analytics, setAnalytics] = useState({ profit: 0, revenue: 0 });
   const [loading, setLoading] = useState(false);
   const [creditForm, setCreditForm] = useState({ phone: '', amount: '', reason: 'Cash Transfer' });
 
@@ -25,13 +25,15 @@ function App() {
       setData(ov.data);
       setAnalytics(an.data);
     } catch (err) { 
-      console.error("Fetch Error:", err.response?.data || err.message); 
+      console.error("Network Error:", err.message); 
     } finally {
       setLoading(false);
     }
   }, [period]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { 
+    fetchData(); 
+  }, [fetchData]);
 
   const handleManualCredit = async (e) => {
     e.preventDefault();
@@ -40,7 +42,7 @@ function App() {
       await axios.post(`${API_URL}/credit-user`, creditForm, {
         headers: { 'x-admin-key': ADMIN_KEY }
       });
-      alert("Success!");
+      alert("Credit Successful!");
       setCreditForm({ phone: '', amount: '', reason: 'Cash Transfer' });
       fetchData();
     } catch (err) { 
@@ -52,7 +54,7 @@ function App() {
     <div className="container">
       <header className="header">
         <h2>BuyBites Admin</h2>
-        {loading && <div className="loading-bar">Updating Data...</div>}
+        {loading && <div className="loading-bar">Syncing Live Data...</div>}
         <div className="tabs">
           <button className={`tab-btn ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}>Monitor</button>
           <button className={`tab-btn ${view === 'actions' ? 'active' : ''}`} onClick={() => setView('actions')}>Actions</button>
@@ -61,19 +63,19 @@ function App() {
 
       {view === 'overview' ? (
         <main>
-          <div className={`card ${data?.netLiquidity >= 0 ? 'success' : 'danger'}`}>
+          <div className={`card ${data.netLiquidity >= 0 ? 'success' : 'danger'}`}>
             <div className="label">Total Net Profit/Liquidity</div>
-            <div className="value">₦{data?.netLiquidity?.toLocaleString() || '0'}</div>
+            <div className="value">₦{data.netLiquidity.toLocaleString()}</div>
           </div>
 
           <div className="stats-row">
             <div className="mini-card">
               <div className="label">Peyflex</div>
-              <div className="value" style={{fontSize: '18px'}}>₦{data?.peyflexBalance?.toLocaleString() || '0'}</div>
+              <div className="value" style={{fontSize: '18px'}}>₦{data.peyflexBalance.toLocaleString()}</div>
             </div>
             <div className="mini-card">
               <div className="label">User Liability</div>
-              <div className="value" style={{fontSize: '18px'}}>₦{data?.userLiability?.toLocaleString() || '0'}</div>
+              <div className="value" style={{fontSize: '18px'}}>₦{data.userLiability.toLocaleString()}</div>
             </div>
           </div>
 
@@ -90,15 +92,15 @@ function App() {
 
           <div className="card" style={{borderLeftColor: 'var(--success)'}}>
             <div className="label">{period.toUpperCase()} PROFIT</div>
-            <div className="value">₦{analytics?.profit?.toLocaleString() || 0}</div>
-            <div className="label" style={{marginTop: '10px'}}>Revenue: ₦{analytics?.revenue?.toLocaleString() || 0}</div>
+            <div className="value">₦{analytics.profit.toLocaleString()}</div>
+            <div className="label" style={{marginTop: '10px'}}>Revenue: ₦{analytics.revenue.toLocaleString()}</div>
           </div>
         </main>
       ) : (
         <main className="card">
           <h3>Manual Wallet Credit</h3>
           <form onSubmit={handleManualCredit}>
-            <input type="text" value={creditForm.phone} onChange={e => setCreditForm({...creditForm, phone: e.target.value})} placeholder="Phone Number" required />
+            <input type="text" value={creditForm.phone} onChange={e => setCreditForm({...creditForm, phone: e.target.value})} placeholder="User Phone Number" required />
             <input type="number" value={creditForm.amount} onChange={e => setCreditForm({...creditForm, amount: e.target.value})} placeholder="Amount (₦)" required />
             <select value={creditForm.reason} onChange={e => setCreditForm({...creditForm, reason: e.target.value})}>
               <option value="Cash Transfer">Direct Bank Transfer</option>
@@ -111,7 +113,7 @@ function App() {
       )}
 
       <footer style={{marginTop: '30px', textAlign: 'center'}}>
-        <button className="btn-secondary" onClick={fetchData}>Sync Now</button>
+        <button className="action-btn" style={{background: '#334155'}} onClick={fetchData}>Sync Now</button>
       </footer>
     </div>
   );
