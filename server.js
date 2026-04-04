@@ -30,13 +30,10 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 }));
 
-// Middleware: Key check
+// Auth Middleware
 const adminAuth = (req, res, next) => {
   const secret = req.headers['x-admin-key'];
-  if (secret !== process.env.ADMIN_SECRET_KEY) {
-    console.warn("⚠️ Unauthorized access attempt blocked.");
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (secret !== process.env.ADMIN_SECRET_KEY) return res.status(401).json({ error: "Unauthorized" });
   next();
 };
 
@@ -47,7 +44,6 @@ app.get('/api/v1/overview', adminAuth, async (req, res) => {
     const pFlex = await axios.get("https://peyflex.com.ng/api/user/", {
       headers: { "Authorization": `Token ${process.env.PEYFLEX_TOKEN}` }
     });
-    
     const liability = userStats[0]?.total || 0;
     const balance = pFlex.data.wallet_balance;
 
@@ -56,13 +52,10 @@ app.get('/api/v1/overview', adminAuth, async (req, res) => {
       peyflexBalance: balance,
       netLiquidity: balance - liability
     });
-  } catch (error) {
-    console.error("Critical Overview Error:", error.message);
-    res.status(500).json({ error: "Server error checking balances" });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// 2. Performance Analytics
+// 2. Profit Analytics
 app.get('/api/v1/analytics', adminAuth, async (req, res) => {
   const { period } = req.query; 
   let startDate = new Date();
@@ -81,12 +74,10 @@ app.get('/api/v1/analytics', adminAuth, async (req, res) => {
     ]);
     res.json({
       profit: stats.reduce((acc, curr) => acc + (curr.revenue - curr.cost), 0),
-      totalRevenue: stats.reduce((acc, curr) => acc + curr.revenue, 0),
+      revenue: stats.reduce((acc, curr) => acc + curr.revenue, 0), // Added for frontend compatibility
       breakdown: stats
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 3. Manual Credit
@@ -94,14 +85,11 @@ app.post('/api/v1/credit-user', adminAuth, async (req, res) => {
   const { phone, amount, reason } = req.body;
   try {
     const user = await User.findOneAndUpdate({ phone }, { $inc: { walletBalance: amount } }, { new: true });
-    if (!user) return res.status(404).json({ message: "User not found" });
-    
+    if (!user) return res.status(404).json({ error: "User not found" });
     await Transaction.create({ amount, costPrice: 0, status: 'SUCCESS', type: 'MANUAL_CREDIT', phone, remark: reason });
     res.json({ message: `Credited ₦${amount} to ${user.fullName}` });
-  } catch (error) {
-    res.status(500).json({ message: "Transaction failed" });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`Monitor Server live on ${PORT}`));
+app.listen(PORT, () => console.log(`Monitor live on ${PORT}`));
