@@ -41,7 +41,7 @@ const adminAuth = (req, res, next) => {
 app.get('/api/v1/overview', adminAuth, async (req, res) => {
   try {
     const userStats = await User.aggregate([{ $group: { _id: null, total: { $sum: "$walletBalance" } } }]);
-    const pFlex = await axios.get("https://peyflex.com.ng/api/user/", {
+    const pFlex = await axios.get("https://peyflex.com.ng/api/wallet/balance/", {
       headers: { "Authorization": `Token ${process.env.PEYFLEX_TOKEN}` }
     });
     const liability = userStats[0]?.total || 0;
