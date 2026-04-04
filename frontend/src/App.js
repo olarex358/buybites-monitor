@@ -2,118 +2,113 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
 
-// Ensure this matches your Primary URL in Render exactly
-const API_URL = "https://buybites-monitor.onrender.com/api/v1";
-const ADMIN_KEY = "Olarewaju@1994"; // Must match Render's ADMIN_SECRET_KEY
+const API_URL = "https://buybites-admin-monitor.onrender.com/api/v1";
 
 function App() {
+  const [token, setToken] = useState(localStorage.getItem('adminToken'));
+  const [secretInput, setSecretInput] = useState('');
   const [view, setView] = useState('overview');
-  const [period, setPeriod] = useState('today');
-  const [data, setData] = useState({ userLiability: 0, peyflexBalance: 0, netLiquidity: 0 });
-  const [analytics, setAnalytics] = useState({ profit: 0, revenue: 0 });
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [creditForm, setCreditForm] = useState({ phone: '', amount: '', reason: 'Cash Transfer' });
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await axios.post(`${API_URL}/login`, { secretKey: secretInput });
+      localStorage.setItem('adminToken', res.data.token);
+      setToken(res.data.token);
+    } catch (err) { alert("Invalid Secret Key"); }
+  };
 
   const fetchData = useCallback(async () => {
+    if (!token) return;
     setLoading(true);
-    const config = { headers: { 'x-admin-key': ADMIN_KEY } };
     try {
-      const [ov, an] = await Promise.all([
-        axios.get(`${API_URL}/overview`, config),
-        axios.get(`${API_URL}/analytics?period=${period}`, config)
-      ]);
-      setData(ov.data);
-      setAnalytics(an.data);
-    } catch (err) { 
-      console.error("Network Error:", err.message); 
-    } finally {
-      setLoading(false);
-    }
-  }, [period]);
-
-  useEffect(() => { 
-    fetchData(); 
-  }, [fetchData]);
-
-  const handleManualCredit = async (e) => {
-    e.preventDefault();
-    if (!window.confirm(`Credit ${creditForm.phone} with ₦${creditForm.amount}?`)) return;
-    try {
-      await axios.post(`${API_URL}/credit-user`, creditForm, {
-        headers: { 'x-admin-key': ADMIN_KEY }
+      const res = await axios.get(`${API_URL}/overview`, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-      alert("Credit Successful!");
-      setCreditForm({ phone: '', amount: '', reason: 'Cash Transfer' });
+      setData(res.data);
+    } catch (err) {
+      if (err.response?.status === 401) setToken(null);
+    } finally { setLoading(false); }
+  }, [token]);
+
+  const toggleService = async () => {
+    try {
+      await axios.post(`${API_URL}/toggle-service`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       fetchData();
-    } catch (err) { 
-      alert(err.response?.data?.error || "Failed to credit user"); 
-    }
+    } catch (err) { alert("Toggle failed"); }
   };
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  if (!token) {
+    return (
+      <div className="container" style={{paddingTop: '100px'}}>
+        <div className="card">
+          <h3>Admin Login</h3>
+          <form onSubmit={handleLogin}>
+            <input type="password" placeholder="Enter Secret Key" value={secretInput} onChange={e => setSecretInput(e.target.value)} required />
+            <button className="action-btn">Unlock Command Center</button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container">
       <header className="header">
-        <h2>BuyBites Admin</h2>
-        {loading && <div className="loading-bar">Syncing Live Data...</div>}
+        <div style={{display: 'flex', justifyContent: 'space-between'}}>
+          <h2>BuyBites Command</h2>
+          <button onClick={() => {localStorage.removeItem('adminToken'); setToken(null);}} style={{background: 'none', border: 'none', color: '#ef4444'}}>Logout</button>
+        </div>
         <div className="tabs">
           <button className={`tab-btn ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}>Monitor</button>
-          <button className={`tab-btn ${view === 'actions' ? 'active' : ''}`} onClick={() => setView('actions')}>Actions</button>
+          <button className={`tab-btn ${view === 'controls' ? 'active' : ''}`} onClick={() => setView('controls')}>System Controls</button>
         </div>
       </header>
 
       {view === 'overview' ? (
         <main>
-          <div className={`card ${data.netLiquidity >= 0 ? 'success' : 'danger'}`}>
-            <div className="label">Total Net Profit/Liquidity</div>
-            <div className="value">₦{data.netLiquidity.toLocaleString()}</div>
+          {data?.isLowBalance && <div className="card danger" style={{borderLeft: 'none', textAlign: 'center'}}>⚠️ PEYFLEX BALANCE LOW! ⚠️</div>}
+          
+          <div className={`card ${data?.netLiquidity >= 0 ? 'success' : 'danger'}`}>
+            <div className="label">Total Net Liquidity</div>
+            <div className="value">₦{data?.netLiquidity?.toLocaleString()}</div>
           </div>
 
           <div className="stats-row">
             <div className="mini-card">
               <div className="label">Peyflex</div>
-              <div className="value" style={{fontSize: '18px'}}>₦{data.peyflexBalance.toLocaleString()}</div>
+              <div className="value">₦{data?.peyflexBalance?.toLocaleString()}</div>
             </div>
             <div className="mini-card">
               <div className="label">User Liability</div>
-              <div className="value" style={{fontSize: '18px'}}>₦{data.userLiability.toLocaleString()}</div>
+              <div className="value">₦{data?.userLiability?.toLocaleString()}</div>
             </div>
-          </div>
-
-          <hr style={{margin: '30px 0', borderColor: '#334155'}} />
-          
-          <div className="label" style={{marginBottom: '10px'}}>Performance Analytics</div>
-          <div className="tabs">
-            {['today', 'week', 'month'].map(p => (
-              <button key={p} className={`tab-btn ${period === p ? 'active' : ''}`} onClick={() => setPeriod(p)}>
-                {p.toUpperCase()}
-              </button>
-            ))}
-          </div>
-
-          <div className="card" style={{borderLeftColor: 'var(--success)'}}>
-            <div className="label">{period.toUpperCase()} PROFIT</div>
-            <div className="value">₦{analytics.profit.toLocaleString()}</div>
-            <div className="label" style={{marginTop: '10px'}}>Revenue: ₦{analytics.revenue.toLocaleString()}</div>
           </div>
         </main>
       ) : (
         <main className="card">
-          <h3>Manual Wallet Credit</h3>
-          <form onSubmit={handleManualCredit}>
-            <input type="text" value={creditForm.phone} onChange={e => setCreditForm({...creditForm, phone: e.target.value})} placeholder="User Phone Number" required />
-            <input type="number" value={creditForm.amount} onChange={e => setCreditForm({...creditForm, amount: e.target.value})} placeholder="Amount (₦)" required />
-            <select value={creditForm.reason} onChange={e => setCreditForm({...creditForm, reason: e.target.value})}>
-              <option value="Cash Transfer">Direct Bank Transfer</option>
-              <option value="Manual Refund">Failed Transaction Assist</option>
-              <option value="Promo">Promotional Credit</option>
-            </select>
-            <button type="submit" className="action-btn">Apply Credit</button>
-          </form>
+          <h3>System Kill-Switch</h3>
+          <p style={{fontSize: '12px', color: '#94a3b8'}}>This will stop all new transactions on the main BuyBites app.</p>
+          <button 
+            onClick={toggleService} 
+            className="action-btn" 
+            style={{background: data?.serviceEnabled ? '#ef4444' : '#22c55e'}}
+          >
+            {data?.serviceEnabled ? "SHUTDOWN SERVICES" : "ACTIVATE SERVICES"}
+          </button>
         </main>
       )}
 
       <footer style={{marginTop: '30px', textAlign: 'center'}}>
-        <button className="action-btn" style={{background: '#334155'}} onClick={fetchData}>Sync Now</button>
+        <button className="btn-secondary" onClick={fetchData} disabled={loading}>
+          {loading ? "Syncing..." : "Sync Now"}
+        </button>
       </footer>
     </div>
   );
