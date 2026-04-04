@@ -33,9 +33,7 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
 // Auth Middleware
 const adminAuth = (req, res, next) => {
   const secret = req.headers['x-admin-key'];
-  if (secret !== process.env.ADMIN_SECRET_KEY) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  if (secret !== process.env.ADMIN_SECRET_KEY) return res.status(401).json({ error: "Unauthorized" });
   next();
 };
 
@@ -44,13 +42,13 @@ app.get('/api/v1/overview', adminAuth, async (req, res) => {
   try {
     const userStats = await User.aggregate([{ $group: { _id: null, total: { $sum: "$walletBalance" } } }]);
     
-    // Updated Peyflex Endpoint based on standard VTU API paths
-    const pFlex = await axios.get("https://peyflex.com.ng/api/v1/user/", {
+    // CORRECTED URL based on documentation screenshot
+    const pFlex = await axios.get("https://client.peyflex.com.ng/api/wallet/balance/", {
       headers: { "Authorization": `Token ${process.env.PEYFLEX_TOKEN}` }
-    }).catch(() => ({ data: { wallet_balance: 0 } })); // Fallback if Peyflex is down
-
+    });
+    
     const liability = userStats[0]?.total || 0;
-    const balance = pFlex.data.wallet_balance || 0;
+    const balance = parseFloat(pFlex.data.wallet_balance || 0);
 
     res.json({
       userLiability: liability,
@@ -58,7 +56,8 @@ app.get('/api/v1/overview', adminAuth, async (req, res) => {
       netLiquidity: balance - liability
     });
   } catch (error) { 
-    res.status(500).json({ error: error.message }); 
+    console.error("Peyflex/DB Error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Failed to fetch overview data" }); 
   }
 });
 
@@ -80,13 +79,11 @@ app.get('/api/v1/analytics', adminAuth, async (req, res) => {
       }}
     ]);
     res.json({
-      profit: stats.reduce((acc, curr) => acc + (curr.revenue - (curr.cost || 0)), 0),
+      profit: stats.reduce((acc, curr) => acc + (curr.revenue - curr.cost), 0),
       revenue: stats.reduce((acc, curr) => acc + curr.revenue, 0),
       breakdown: stats
     });
-  } catch (err) { 
-    res.status(500).json({ error: err.message }); 
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // 3. Manual Credit
@@ -95,20 +92,10 @@ app.post('/api/v1/credit-user', adminAuth, async (req, res) => {
   try {
     const user = await User.findOneAndUpdate({ phone }, { $inc: { walletBalance: amount } }, { new: true });
     if (!user) return res.status(404).json({ error: "User not found" });
-    
-    await Transaction.create({ 
-      amount, 
-      costPrice: 0, 
-      status: 'SUCCESS', 
-      type: 'MANUAL_CREDIT', 
-      phone, 
-      remark: reason 
-    });
+    await Transaction.create({ amount, costPrice: 0, status: 'SUCCESS', type: 'MANUAL_CREDIT', phone, remark: reason });
     res.json({ message: `Credited ₦${amount} to ${user.fullName}` });
-  } catch (error) { 
-    res.status(500).json({ error: error.message }); 
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-const PORT = process.env.PORT || 10000; // Matches Render's expected port
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`Monitor live on ${PORT}`));
