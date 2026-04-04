@@ -1,110 +1,118 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API_URL = "https://buybites-monitor.onrender.com/api/v1";
+// REMOVE "/monitor" from the end to match server.js routes
+const API_URL = "https://buybites-monitor.onrender.com/api/v1"; 
+const ADMIN_KEY = "Olarewaju@1994"; // MUST match Render ADMIN_SECRET_KEY
 
 function App() {
-  const [isLocked, setIsLocked] = useState(true);
-  const [passKey, setPassKey] = useState(localStorage.getItem('bb_key') || '');
-  const [view, setView] = useState('monitor');
+  const [view, setView] = useState('overview');
   const [period, setPeriod] = useState('today');
   const [data, setData] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [creditForm, setCreditForm] = useState({ phone: '', amount: '', reason: 'Cash Transfer' });
 
-  const sync = async () => {
-    if (!passKey) return;
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    const config = { headers: { 'x-admin-key': passKey } };
+    const config = { headers: { 'x-admin-key': ADMIN_KEY } };
     try {
       const [ov, an] = await Promise.all([
         axios.get(`${API_URL}/overview`, config),
         axios.get(`${API_URL}/analytics?period=${period}`, config)
       ]);
-      setData({ ...ov.data, analytics: an.data });
-      setIsLocked(false);
-      localStorage.setItem('bb_key', passKey);
-    } catch (err) {
-      if (err.response?.status === 401) alert("Wrong Key!");
+      setData(ov.data);
+      setAnalytics(an.data);
+    } catch (err) { 
+      console.error("Fetch Error:", err.response?.data || err.message); 
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
+  }, [period]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleManualCredit = async (e) => {
+    e.preventDefault();
+    if (!window.confirm(`Credit ${creditForm.phone} with ₦${creditForm.amount}?`)) return;
+    try {
+      await axios.post(`${API_URL}/credit-user`, creditForm, {
+        headers: { 'x-admin-key': ADMIN_KEY }
+      });
+      alert("Success!");
+      setCreditForm({ phone: '', amount: '', reason: 'Cash Transfer' });
+      fetchData();
+    } catch (err) { 
+      alert(err.response?.data?.message || "Failed to credit user"); 
+    }
   };
-
-  useEffect(() => { if (!isLocked) sync(); }, [period]);
-
-  if (isLocked) {
-    return (
-      <div className="container" style={{display: 'flex', alignItems: 'center', height: '80vh'}}>
-        <div className="card" style={{width: '100%'}}>
-          <h2>BuyBites Admin</h2>
-          <input type="password" value={passKey} onChange={e => setPassKey(e.target.value)} placeholder="Enter Admin Key" />
-          <button className="action-btn" onClick={sync}>Unlock</button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="container">
       <header className="header">
+        <h2>BuyBites Admin</h2>
+        {loading && <div className="loading-bar">Syncing Live Data...</div>}
         <div className="tabs">
-          <button className={`tab-btn ${view === 'monitor' ? 'active' : ''}`} onClick={() => setView('monitor')}>Monitor</button>
+          <button className={`tab-btn ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}>Monitor</button>
           <button className={`tab-btn ${view === 'actions' ? 'active' : ''}`} onClick={() => setView('actions')}>Actions</button>
         </div>
       </header>
 
-      {view === 'monitor' ? (
+      {view === 'overview' ? (
         <main>
-          <div className={`card ${data?.netLiquidity >= 0 ? 'success' : 'danger'}`}>
-            <div className="label">Net Liquidity</div>
-            <div className="value">₦{data?.netLiquidity?.toLocaleString()}</div>
+          <div className={`card ${data?.netLiquidity > 0 ? 'success' : 'danger'}`}>
+            <div className="label">Total Net Liquidity</div>
+            <div className="value">₦{data?.netLiquidity?.toLocaleString() || '0'}</div>
           </div>
+
           <div className="stats-row">
-            <div className="mini-card"><div className="label">Peyflex</div><div className="value" style={{fontSize: '18px'}}>₦{data?.peyflexBalance?.toLocaleString()}</div></div>
-            <div className="mini-card"><div className="label">Liability</div><div className="value" style={{fontSize: '18px'}}>₦{data?.userLiability?.toLocaleString()}</div></div>
-          </div>
-          <div className="card" style={{marginTop: '20px', borderLeftColor: 'var(--success)'}}>
-            <div className="tabs">
-              {['today', 'week', 'month'].map(p => (
-                <button key={p} className={`tab-btn ${period === p ? 'active' : ''}`} onClick={() => setPeriod(p)}>{p}</button>
-              ))}
+            <div className="mini-card">
+              <div className="label">Peyflex</div>
+              <div className="value" style={{fontSize: '18px'}}>₦{data?.peyflexBalance?.toLocaleString() || '0'}</div>
             </div>
-            <div className="label">{period} Profit</div>
-            <div className="value">₦{data?.analytics?.profit?.toLocaleString()}</div>
-            {data?.analytics?.breakdown?.map(item => (
-              <div key={item._id} style={{display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginTop: '5px'}}>
-                <span>{item._id || 'Airtime'}</span>
-                <span style={{fontWeight: 'bold'}}>₦{(item.revenue - item.cost).toLocaleString()}</span>
-              </div>
+            <div className="mini-card">
+              <div className="label">User Liability</div>
+              <div className="value" style={{fontSize: '18px'}}>₦{data?.userLiability?.toLocaleString() || '0'}</div>
+            </div>
+          </div>
+
+          <hr style={{margin: '30px 0', borderColor: '#334155'}} />
+          
+          <div className="label" style={{marginBottom: '10px'}}>Performance Analytics</div>
+          <div className="tabs">
+            {['today', 'week', 'month'].map(p => (
+              <button key={p} className={`tab-btn ${period === p ? 'active' : ''}`} onClick={() => setPeriod(p)}>
+                {p.toUpperCase()}
+              </button>
             ))}
+          </div>
+
+          <div className="card" style={{borderLeftColor: 'var(--success)'}}>
+            <div className="label">{period.toUpperCase()} PROFIT</div>
+            <div className="value">₦{analytics?.profit?.toLocaleString() || 0}</div>
+            <div className="label" style={{marginTop: '10px'}}>Revenue: ₦{analytics?.totalRevenue?.toLocaleString() || 0}</div>
           </div>
         </main>
       ) : (
-        <ManualCredit onComplete={sync} passKey={passKey} />
+        <main className="card">
+          <h3>Manual Wallet Credit</h3>
+          <form onSubmit={handleManualCredit}>
+            <input type="text" value={creditForm.phone} onChange={e => setCreditForm({...creditForm, phone: e.target.value})} placeholder="Phone (e.g. 081...)" required />
+            <input type="number" value={creditForm.amount} onChange={e => setCreditForm({...creditForm, amount: e.target.value})} placeholder="Amount (₦)" required />
+            <select value={creditForm.reason} onChange={e => setCreditForm({...creditForm, reason: e.target.value})}>
+              <option value="Cash Transfer">Direct Bank Transfer</option>
+              <option value="Manual Refund">Failed Transaction Assist</option>
+              <option value="Promo">Promotional Credit</option>
+            </select>
+            <button type="submit" className="action-btn">Apply Credit</button>
+          </form>
+        </main>
       )}
-      <button className="action-btn" style={{marginTop: '20px', background: '#334155'}} onClick={sync}>{loading ? '...' : 'Sync Now'}</button>
-    </div>
-  );
-}
 
-function ManualCredit({ onComplete, passKey }) {
-  const [f, setF] = useState({ phone: '', amount: '', reason: 'Cash Transfer' });
-  const sub = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post(`${API_URL}/credit-user`, f, { headers: { 'x-admin-key': passKey } });
-      alert("Success");
-      onComplete();
-    } catch (err) { alert("Failed"); }
-  };
-  return (
-    <div className="card">
-      <h3>Manual Credit</h3>
-      <form onSubmit={sub}>
-        <input type="text" placeholder="Phone" onChange={e => setF({...f, phone: e.target.value})} required />
-        <input type="number" placeholder="Amount" onChange={e => setF({...f, amount: e.target.value})} required />
-        <button type="submit" className="action-btn">Send</button>
-      </form>
+      <footer style={{marginTop: '30px', textAlign: 'center'}}>
+        <button className="btn-secondary" style={{width: '100%', padding: '10px', background: '#334155', border: 'none', color: 'white', borderRadius: '8px'}} onClick={fetchData}>Sync Now</button>
+      </footer>
     </div>
   );
 }
