@@ -9,7 +9,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const JWT_SECRET = process.env.JWT_SECRET || 'buybites_admin_secret_2026';
+const JWT_SECRET = process.env.JWT_SECRET || 'Olarewaju@1994';
 
 // Database Connection
 mongoose.connect(process.env.MONGO_URI)
