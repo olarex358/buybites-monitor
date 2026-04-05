@@ -9,8 +9,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// JWT Secret - Add this to your Render Environment Variables
-const JWT_SECRET = process.env.JWT_SECRET || 'your_fallback_secret';
+const JWT_SECRET = process.env.JWT_SECRET || 'buybites_admin_secret_2026';
 
 // Database Connection
 mongoose.connect(process.env.MONGO_URI)
@@ -25,74 +24,107 @@ const User = mongoose.model('User', new mongoose.Schema({
 }));
 
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
-  amount: Number, costPrice: Number, status: String, type: String, phone: String, createdAt: { type: Date, default: Date.now }
+  amount: Number,
+  status: String,
+  createdAt: { type: Date, default: Date.now }
 }));
 
-// New Model for Global Controls
 const SystemSetting = mongoose.model('SystemSetting', new mongoose.Schema({
-  serviceEnabled: { type: Boolean, default: true },
-  lowBalanceThreshold: { type: Number, default: 2000 }
+  serviceEnabled: { type: Boolean, default: true }
 }));
+
+const BalanceSnapshot = mongoose.model('BalanceSnapshot', new mongoose.Schema({
+  platform: { type: String, enum: ['PEYFLEX', 'SME_DATA'] },
+  balance: Number,
+  type: { type: String, enum: ['AUTO', 'MANUAL'] },
+  updatedAt: { type: Date, default: Date.now }
+}));
+
+// --- PROFIT CONFIGURATION (Zero-Touch Mapping) ---
+const COST_STRUCTURE = {
+  "300": 235,   // 1GB MTN costs 235
+  "600": 470,   // 2GB
+  "1500": 1175, // 5GB
+  "200": 165,   // Small data
+  "500": 415    // 1.5GB
+};
 
 // --- AUTH MIDDLEWARE ---
 const verifyToken = (req, res, next) => {
   const token = req.headers['authorization']?.split(' ')[1];
-  if (!token) return res.status(403).json({ error: "No token provided" });
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(401).json({ error: "Unauthorized" });
+    if (err) return res.status(401).json({ error: "Invalid Session" });
     next();
   });
 };
 
 // --- ROUTES ---
 
-// 1. Login Route
 app.post('/api/v1/login', (req, res) => {
   const { secretKey } = req.body;
   if (secretKey === process.env.ADMIN_SECRET_KEY) {
-    const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '24h' });
     return res.json({ token });
   }
-  res.status(401).json({ error: "Invalid Secret Key" });
+  res.status(401).json({ error: "Invalid Key" });
 });
 
-// 2. Overview with Low Balance Alert Logic
 app.get('/api/v1/overview', verifyToken, async (req, res) => {
   try {
     const userStats = await User.aggregate([{ $group: { _id: null, total: { $sum: "$walletBalance" } } }]);
     const settings = await SystemSetting.findOne() || await SystemSetting.create({});
-    
-    const pFlex = await axios.get("https://client.peyflex.com.ng/api/wallet/balance/", {
-      headers: { "Authorization": `Token ${process.env.PEYFLEX_TOKEN}` }
+    const sales = await Transaction.find({ status: 'SUCCESS' }).lean();
+
+    // 1. Profit Calculation
+    let totalRevenue = 0, totalCost = 0;
+    sales.forEach(tx => {
+      totalRevenue += tx.amount;
+      totalCost += COST_STRUCTURE[tx.amount.toString()] || (tx.amount * 0.92);
     });
 
-    const balance = parseFloat(pFlex.data.wallet_balance || 0);
-    const liability = userStats[0]?.total || 0;
+    // 2. Smart-Sync Wallet Helper
+    const getBalance = async (platform) => {
+      try {
+        const url = platform === 'PEYFLEX' ? "https://client.peyflex.com.ng/api/wallet/balance/" : "https://smedata.ng/api/v1/user";
+        const token = platform === 'PEYFLEX' ? process.env.PEYFLEX_TOKEN : process.env.SME_DATA_TOKEN;
+        const apiRes = await axios.get(url, { headers: { "Authorization": `Token ${token}` }, timeout: 4000 });
+        const bal = parseFloat(apiRes.data.wallet_balance || apiRes.data.balance || 0);
+        return { bal, source: 'LIVE' };
+      } catch (err) {
+        const manual = await BalanceSnapshot.findOne({ platform, type: 'MANUAL' }).sort({ updatedAt: -1 });
+        return { bal: manual ? manual.balance : 0, source: 'OFFLINE/MANUAL' };
+      }
+    };
 
-    // Logic for Low Balance Alert (Can be extended to send Email/SMS)
-    const isLow = balance < settings.lowBalanceThreshold;
+    const peyflex = await getBalance('PEYFLEX');
+    const sme = await getBalance('SME_DATA');
+    const liability = userStats[0]?.total || 0;
 
     res.json({
       userLiability: liability,
-      peyflexBalance: balance,
-      netLiquidity: balance - liability,
-      serviceEnabled: settings.serviceEnabled,
-      isLowBalance: isLow
+      wallets: { peyflex, sme },
+      netLiquidity: (peyflex.bal + sme.bal) - liability,
+      realTimeProfit: totalRevenue - totalCost,
+      totalRevenue,
+      serviceEnabled: settings.serviceEnabled
     });
   } catch (error) { res.status(500).json({ error: "Overview Sync Failed" }); }
 });
 
-// 3. Toggle Service (Kill-switch)
-app.post('/api/v1/toggle-service', verifyToken, async (req, res) => {
-  try {
-    const settings = await SystemSetting.findOne();
-    settings.serviceEnabled = !settings.serviceEnabled;
-    await settings.save();
-    res.json({ enabled: settings.serviceEnabled });
-  } catch (err) { res.status(500).send(); }
+app.post('/api/v1/wallets/manual', verifyToken, async (req, res) => {
+  const { platform, balance } = req.body;
+  await BalanceSnapshot.create({ platform, balance, type: 'MANUAL' });
+  res.json({ message: "Updated" });
 });
 
-// (Keep your existing /analytics and /credit-user routes, but update them to use verifyToken)
+app.post('/api/v1/toggle-service', verifyToken, async (req, res) => {
+  const settings = await SystemSetting.findOne();
+  settings.serviceEnabled = !settings.serviceEnabled;
+  await settings.save();
+  res.json({ enabled: settings.serviceEnabled });
+});
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Command Center live on ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Monitor live on ${PORT}`));
+

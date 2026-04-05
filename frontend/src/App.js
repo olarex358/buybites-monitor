@@ -10,6 +10,7 @@ function App() {
   const [view, setView] = useState('overview');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [manualAmt, setManualAmt] = useState('');
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -33,48 +34,61 @@ function App() {
     } finally { setLoading(false); }
   }, [token]);
 
+  useEffect(() => { fetchData(); }, [fetchData]);
+
   const toggleService = async () => {
     try {
-      await axios.post(`${API_URL}/toggle-service`, {}, {
+      const res = await axios.post(`${API_URL}/toggle-service`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      fetchData();
-    } catch (err) { alert("Toggle failed"); }
+      setData(prev => ({ ...prev, serviceEnabled: res.data.enabled }));
+    } catch (err) { alert("Action failed"); }
   };
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const handleManualUpdate = async (platform) => {
+    if (!manualAmt) return alert("Enter balance");
+    try {
+      setLoading(true);
+      await axios.post(`${API_URL}/wallets/manual`, 
+        { platform, balance: parseFloat(manualAmt) },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setManualAmt('');
+      fetchData();
+    } catch (err) { alert("Failed to update"); }
+    finally { setLoading(false); }
+  };
 
   if (!token) {
     return (
-      <div className="container" style={{paddingTop: '100px'}}>
-        <div className="card">
-          <h3>Admin Login</h3>
-          <form onSubmit={handleLogin}>
-            <input type="password" placeholder="Enter Secret Key" value={secretInput} onChange={e => setSecretInput(e.target.value)} required />
-            <button className="action-btn">Unlock Command Center</button>
-          </form>
-        </div>
+      <div className="login-container">
+        <form onSubmit={handleLogin} className="card">
+          <h2>BuyBites Admin</h2>
+          <input type="password" placeholder="Admin Secret Key" value={secretInput} onChange={(e) => setSecretInput(e.target.value)} />
+          <button type="submit" className="action-btn">Enter Command Center</button>
+        </form>
       </div>
     );
   }
 
   return (
     <div className="container">
-      <header className="header">
-        <div style={{display: 'flex', justifyContent: 'space-between'}}>
-          <h2>BuyBites Command</h2>
-          <button onClick={() => {localStorage.removeItem('adminToken'); setToken(null);}} style={{background: 'none', border: 'none', color: '#ef4444'}}>Logout</button>
-        </div>
-        <div className="tabs">
-          <button className={`tab-btn ${view === 'overview' ? 'active' : ''}`} onClick={() => setView('overview')}>Monitor</button>
-          <button className={`tab-btn ${view === 'controls' ? 'active' : ''}`} onClick={() => setView('controls')}>System Controls</button>
-        </div>
+      <header>
+        <h1>BuyBites Monitor</h1>
+        <nav>
+          <button onClick={() => setView('overview')} className={view === 'overview' ? 'active' : ''}>Finance</button>
+          <button onClick={() => setView('controls')} className={view === 'controls' ? 'active' : ''}>Controls</button>
+          <button onClick={() => { localStorage.removeItem('adminToken'); setToken(null); }} className="btn-secondary">Exit</button>
+        </nav>
       </header>
 
       {view === 'overview' ? (
         <main>
-          {data?.isLowBalance && <div className="card danger" style={{borderLeft: 'none', textAlign: 'center'}}>⚠️ PEYFLEX BALANCE LOW! ⚠️</div>}
-          
+          <div className="card success" style={{marginBottom: '15px', background: '#f0fdf4', border: '1px solid #bbf7d0'}}>
+            <div className="label" style={{color: '#166534'}}>Real-Time Profit</div>
+            <div className="value" style={{color: '#15803d'}}>₦{data?.realTimeProfit?.toLocaleString()}</div>
+          </div>
+
           <div className={`card ${data?.netLiquidity >= 0 ? 'success' : 'danger'}`}>
             <div className="label">Total Net Liquidity</div>
             <div className="value">₦{data?.netLiquidity?.toLocaleString()}</div>
@@ -82,36 +96,39 @@ function App() {
 
           <div className="stats-row">
             <div className="mini-card">
-              <div className="label">Peyflex</div>
-              <div className="value">₦{data?.peyflexBalance?.toLocaleString()}</div>
+              <div className="label">Peyflex ({data?.wallets?.peyflex?.source})</div>
+              <div className="value">₦{data?.wallets?.peyflex?.bal?.toLocaleString()}</div>
             </div>
             <div className="mini-card">
-              <div className="label">User Liability</div>
-              <div className="value">₦{data?.userLiability?.toLocaleString()}</div>
+              <div className="label">SME Data ({data?.wallets?.sme?.source})</div>
+              <div className="value">₦{data?.wallets?.sme?.bal?.toLocaleString()}</div>
             </div>
+          </div>
+
+          <div className="card" style={{marginTop: '20px'}}>
+             <h4>Manual Sync Fallback</h4>
+             <div style={{display: 'flex', gap: '10px', marginTop: '10px'}}>
+                <input type="number" placeholder="Actual Balance" value={manualAmt} onChange={(e) => setManualAmt(e.target.value)} style={{flex: 1}}/>
+                <button onClick={() => handleManualUpdate('PEYFLEX')} className="btn-secondary">Peyflex</button>
+                <button onClick={() => handleManualUpdate('SME_DATA')} className="btn-secondary">SME</button>
+             </div>
           </div>
         </main>
       ) : (
         <main className="card">
           <h3>System Kill-Switch</h3>
-          <p style={{fontSize: '12px', color: '#94a3b8'}}>This will stop all new transactions on the main BuyBites app.</p>
-          <button 
-            onClick={toggleService} 
-            className="action-btn" 
-            style={{background: data?.serviceEnabled ? '#ef4444' : '#22c55e'}}
-          >
+          <button onClick={toggleService} className="action-btn" style={{background: data?.serviceEnabled ? '#ef4444' : '#22c55e'}}>
             {data?.serviceEnabled ? "SHUTDOWN SERVICES" : "ACTIVATE SERVICES"}
           </button>
         </main>
       )}
 
       <footer style={{marginTop: '30px', textAlign: 'center'}}>
-        <button className="btn-secondary" onClick={fetchData} disabled={loading}>
-          {loading ? "Syncing..." : "Sync Now"}
-        </button>
+        <button className="btn-secondary" onClick={fetchData} disabled={loading}>{loading ? "Syncing..." : "Sync Now"}</button>
       </footer>
     </div>
   );
 }
 
 export default App;
+
