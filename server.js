@@ -8,33 +8,27 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- DB CONNECTION ---
+// Database Connection
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Command Center Connected"))
   .catch(err => console.error("❌ DB Error:", err));
 
-// --- MODELS ---
+// Models
 const User = mongoose.model('User', new mongoose.Schema({ walletBalance: Number }));
+const SystemSetting = mongoose.model('SystemSetting', new mongoose.Schema({ serviceEnabled: { type: Boolean, default: true } }));
 
-// --- SIMPLIFIED LOGIN ---
-app.post('/api/v1/login', (req, res) => {
-  const { secretKey } = req.body;
-  const VALID_KEY = process.env.ADMIN_SECRET_KEY || "admin123";
-  
-  if (secretKey === VALID_KEY) {
-    return res.json({ authenticated: true });
-  }
-  res.status(401).json({ error: "Unauthorized" });
-});
+// --- REMOVED LOGIN ROUTE & MIDDLEWARE ---
 
-// --- DASHBOARD DATA ---
 app.get('/api/v1/overview', async (req, res) => {
   try {
-    // 1. Calculate Liability (Sum of all user balances)
+    // 1. Get User Liability
     const userStats = await User.aggregate([{ $group: { _id: null, total: { $sum: "$walletBalance" } } }]);
     const liability = userStats[0]?.total || 0;
 
-    // 2. Fetch Peyflex Balance
+    // 2. Get Settings
+    const settings = await SystemSetting.findOne() || { serviceEnabled: true };
+
+    // 3. Fetch Peyflex Balance
     let peyflexBal = 0;
     let source = 'OFFLINE';
     try {
@@ -45,20 +39,21 @@ app.get('/api/v1/overview', async (req, res) => {
       peyflexBal = parseFloat(peyRes.data.wallet_balance || 0);
       source = 'LIVE';
     } catch (err) {
-      console.log("Peyflex API Timeout - showing 0");
+      console.log("Peyflex API Timeout");
     }
 
-    // 3. Send Response (Variable names must match App.js)
+    // 4. Send Unified Response
     res.json({
       userLiability: liability,
       peyflexBalance: peyflexBal,
       peyflexSource: source,
-      netLiquidity: peyflexBal - liability
+      netLiquidity: peyflexBal - liability,
+      serviceEnabled: settings.serviceEnabled
     });
   } catch (error) {
-    res.status(500).json({ error: "Server Error" });
+    res.status(500).json({ error: "Sync Failed" });
   }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`Server live on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server live on port ${PORT}`));
