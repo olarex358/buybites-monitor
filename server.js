@@ -5,7 +5,12 @@ const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+// FIXED CORS: Explicitly allowing localhost and all origins for easier mobile testing
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"]
+}));
 app.use(express.json());
 
 // --- DATABASE CONNECTION ---
@@ -16,6 +21,7 @@ mongoose.connect(process.env.MONGO_URI)
 // --- MODELS ---
 const User = mongoose.model('User', new mongoose.Schema({ walletBalance: Number }));
 
+// Stores your manual entries and settings
 const AdminStats = mongoose.model('AdminStats', new mongoose.Schema({
   peyflexManual: { type: Number, default: 0 },
   korapayManual: { type: Number, default: 0 },
@@ -26,11 +32,11 @@ const AdminStats = mongoose.model('AdminStats', new mongoose.Schema({
 // --- API: FETCH OVERVIEW ---
 app.get('/api/v1/overview', async (req, res) => {
   try {
-    // 1. Get User Liability
+    // 1. Calculate Liability from actual User balances
     const userStats = await User.aggregate([{ $group: { _id: null, total: { $sum: "$walletBalance" } } }]);
     const liability = userStats[0]?.total || 0;
 
-    // 2. Get Admin Settings/Manual Balances
+    // 2. Get saved manual balances
     let stats = await AdminStats.findOne();
     if (!stats) stats = await AdminStats.create({});
 
@@ -39,15 +45,17 @@ app.get('/api/v1/overview', async (req, res) => {
     let sme = stats.smeManual;
     let source = stats.useAutoSync ? 'LIVE' : 'MANUAL';
 
-    // 3. Optional Auto-Sync (Only if enabled)
+    // 3. API Sync (Only if toggled ON)
     if (stats.useAutoSync) {
       try {
         const peyRes = await axios.get("https://client.peyflex.com.ng/api/wallet/balance/", {
           headers: { "Authorization": `Token ${process.env.PEYFLEX_TOKEN}` },
-          timeout: 3000
+          timeout: 4000
         });
         peyflex = parseFloat(peyRes.data.wallet_balance || 0);
-      } catch (e) { source = 'LIVE (FALLBACK TO MANUAL)'; }
+      } catch (e) { 
+        source = 'LIVE (FALLBACK TO MANUAL)'; 
+      }
     }
 
     const totalAssets = peyflex + korapay + sme;
@@ -72,14 +80,16 @@ app.post('/api/v1/update-balances', async (req, res) => {
   try {
     const { peyflex, korapay, sme, useAutoSync } = req.body;
     await AdminStats.findOneAndUpdate({}, {
-      peyflexManual: peyflex,
-      korapayManual: korapay,
-      smeManual: sme,
+      peyflexManual: Number(peyflex),
+      korapayManual: Number(korapay),
+      smeManual: Number(sme),
       useAutoSync
     }, { upsert: true });
-    res.json({ message: "Balances Locked In" });
-  } catch (e) { res.status(500).json({ error: "Update Failed" }); }
+    res.json({ message: "Balances Updated" });
+  } catch (e) { 
+    res.status(500).json({ error: "Update Failed" }); 
+  }
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server active on port ${PORT}`));
