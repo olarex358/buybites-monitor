@@ -8,52 +8,92 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Database Connection
+// DB
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Command Center Connected"))
+  .then(() => console.log("✅ DB Connected"))
   .catch(err => console.error("❌ DB Error:", err));
 
 // Models
-const User = mongoose.model('User', new mongoose.Schema({ walletBalance: Number }));
-const SystemSetting = mongoose.model('SystemSetting', new mongoose.Schema({ serviceEnabled: { type: Boolean, default: true } }));
+const User = mongoose.model('User', new mongoose.Schema({
+  walletBalance: { type: Number, default: 0 }
+}));
 
-// --- REMOVED LOGIN ROUTE & MIDDLEWARE ---
+const SystemSetting = mongoose.model('SystemSetting', new mongoose.Schema({
+  serviceEnabled: { type: Boolean, default: true },
+  manualBalance: { type: Number, default: 0 },
+  useManual: { type: Boolean, default: false }
+}));
 
+// GET OVERVIEW
 app.get('/api/v1/overview', async (req, res) => {
   try {
-    // 1. Get User Liability
-    const userStats = await User.aggregate([{ $group: { _id: null, total: { $sum: "$walletBalance" } } }]);
+    const userStats = await User.aggregate([
+      { $group: { _id: null, total: { $sum: "$walletBalance" } } }
+    ]);
+
     const liability = userStats[0]?.total || 0;
 
-    // 2. Get Settings
-    const settings = await SystemSetting.findOne() || { serviceEnabled: true };
-
-    // 3. Fetch Peyflex Balance
-    let peyflexBal = 0;
-    let source = 'OFFLINE';
-    try {
-      const peyRes = await axios.get("https://client.peyflex.com.ng/api/wallet/balance/", {
-        headers: { "Authorization": `Token ${process.env.PEYFLEX_TOKEN}` },
-        timeout: 4000
-      });
-      peyflexBal = parseFloat(peyRes.data.wallet_balance || 0);
-      source = 'LIVE';
-    } catch (err) {
-      console.log("Peyflex API Timeout");
+    let settings = await SystemSetting.findOne();
+    if (!settings) {
+      settings = await SystemSetting.create({});
     }
 
-    // 4. Send Unified Response
+    let peyflexBal = 0;
+    let source = 'OFFLINE';
+
+    if (settings.useManual) {
+      peyflexBal = settings.manualBalance;
+      source = 'MANUAL';
+    } else {
+      try {
+        const peyRes = await axios.get(
+          "https://client.peyflex.com.ng/api/wallet/balance/",
+          {
+            headers: { Authorization: `Token ${process.env.PEYFLEX_TOKEN}` },
+            timeout: 5000
+          }
+        );
+
+        peyflexBal = parseFloat(peyRes.data.wallet_balance || 0);
+        source = 'LIVE';
+      } catch (err) {
+        console.log("⚠️ Peyflex failed, fallback to manual");
+        peyflexBal = settings.manualBalance;
+        source = 'FALLBACK';
+      }
+    }
+
+    const profit = peyflexBal - liability;
+
     res.json({
       userLiability: liability,
       peyflexBalance: peyflexBal,
       peyflexSource: source,
-      netLiquidity: peyflexBal - liability,
-      serviceEnabled: settings.serviceEnabled
+      netLiquidity: profit,
+      profit,
+      serviceEnabled: settings.serviceEnabled,
+      useManual: settings.useManual
     });
-  } catch (error) {
-    res.status(500).json({ error: "Sync Failed" });
+
+  } catch (err) {
+    res.status(500).json({ error: "Server Error" });
   }
 });
 
+// UPDATE MANUAL BALANCE
+app.post('/api/v1/manual', async (req, res) => {
+  const { manualBalance, useManual } = req.body;
+
+  let settings = await SystemSetting.findOne();
+  if (!settings) settings = new SystemSetting();
+
+  settings.manualBalance = manualBalance;
+  settings.useManual = useManual;
+
+  await settings.save();
+
+  res.json({ message: "Updated" });
+});
+
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`🚀 Server live on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Running on ${PORT}`));
